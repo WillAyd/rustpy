@@ -2,6 +2,7 @@ cimport cython
 from libc.limits cimport LLONG_MIN
 import numpy as np
 from numpy cimport ndarray, int64_t
+import time
 
 
 # cythonize -3 cypy.pyx
@@ -27,4 +28,11 @@ cdef ndarray[int64_t, ndim=1] _find_max(ndarray[int64_t, ndim=2] values):
 
 
 def find_max(ndarray[int64_t, ndim=2] values):
-    return _find_max(values)
+    cdef ndarray[int64_t, ndim=1] result
+    start = time.time_ns()
+    result = _find_max(values)
+    end = time.time_ns()
+    duration = (end - start) / 1_000_000
+    print(f"cypy took {duration} milliseconds")
+    return result
+    
