@@ -13,16 +13,18 @@ cdef ndarray[int64_t, ndim=1] _find_max(ndarray[int64_t, ndim=2] values):
     cdef:
         ndarray[int64_t, ndim=1] out
         int64_t val, colnum, rownum
+        Py_ssize_t N, K
 
     N, K = (<object>values).shape
-    out = np.zeros(K, dtype=np.int64)
-    for colnum in range(K):
-        val = LLONG_MIN  # imperfect assumption, but no INT64_T_MIN from numpy
-        for rownum in range(N):
-            if val <= values[rownum, colnum]:
-                val = values[rownum, colnum]
+    out = np.zeros(K, dtype=np.int64)    
+    with nogil:
+        for colnum in range(K):
+            val = LLONG_MIN  # imperfect assumption, but no INT64_T_MIN from numpy
+            for rownum in range(N):
+                if val <= values[rownum, colnum]:
+                    val = values[rownum, colnum]
 
-        out[colnum] = val
+            out[colnum] = val
 
     return out
 
