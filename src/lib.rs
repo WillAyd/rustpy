@@ -44,6 +44,10 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         result
     }
 
+    // Rust has a SyncUnsafeCell in nightly builds which would likely be our best
+    // in the future https://doc.rust-lang.org/std/cell/struct.SyncUnsafeCell.html
+    // For now, we are going to wrap our UnsafeCell in a struct that provides a dummy
+    // trait implementation for Send / Sync inspired by:
     // https://stackoverflow.com/questions/65178245/how-do-i-write-to-a-mutable-slice-from-multiple-threads-at-arbitrary-indexes-wit
     #[derive(Copy, Clone)]
     struct UnsafeArray1<'a> {
