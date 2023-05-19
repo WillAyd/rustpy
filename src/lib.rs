@@ -1,7 +1,10 @@
 use ndarray::parallel::prelude::*;
-use numpy::ndarray::{Array1, ArrayView2, Axis, Zip};
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray2};
-use pyo3::{pymodule, types::PyModule, PyResult, Python};
+use numpy::ndarray::{Array1, ArrayView1, ArrayView2, ArrayViewMut1, Axis, Zip};
+use numpy::{
+    Element, IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray1,
+};
+use pyo3::{pymodule, types::PyModule, FromPyObject, PyObject, PyResult, Python};
+use std::cell::UnsafeCell;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -41,9 +44,36 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         result
     }
 
+    // https://stackoverflow.com/questions/65178245/how-do-i-write-to-a-mutable-slice-from-multiple-threads-at-arbitrary-indexes-wit
+    #[derive(Copy, Clone)]
+    struct UnsafeArray1<'a> {
+        array: &'a UnsafeCell<Array1<i64>>,
+    }
+
+    unsafe impl<'a> Send for UnsafeArray1<'a> {}
+    unsafe impl<'a> Sync for UnsafeArray1<'a> {}
+
+    impl<'a> UnsafeArray1<'a> {
+        pub fn new(array: &'a mut Array1<i64>) -> Self {
+            let ptr = array as *mut Array1<i64> as *const UnsafeCell<Array1<i64>>;
+            Self {
+                array: unsafe { &*ptr },
+            }
+        }
+
+        /// SAFETY: It is UB if two threads write to the same index without
+        /// synchronization.
+        pub unsafe fn write(&self, i: usize, value: i64) {
+            let ptr = self.array.get();
+            (*ptr)[i] = value;
+        }
+    }
+
     // example using complex numbers
     fn find_max_parallel(arr: ArrayView2<'_, i64>) -> Array1<i64> {
-        let mutex = Arc::new(Mutex::new(Array1::default(arr.ncols())));
+        //let out = UnsafeCell::new(Array1::default(arr.ncols()));
+        let mut out = Array1::default(arr.ncols());
+        let hax = UnsafeArray1::new(&mut out);
 
         // parallel iterator is not implemented, so some hacks
         // https://github.com/rust-ndarray/ndarray/issues/1043
@@ -58,13 +88,10 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                     }
                 }
 
-                let mut guard = mutex.lock().unwrap();
-                guard[i] = val;
+                unsafe { hax.write(i, val) };
             });
 
-        // https://stackoverflow.com/questions/29177449/how-to-take-ownership-of-t-from-arcmutext
-        let lock = Arc::try_unwrap(mutex).expect("Lock still have multiple owners");
-        lock.into_inner().expect("Mutex cannot be locked")
+        out
     }
 
     // wrapper of `find_max`
