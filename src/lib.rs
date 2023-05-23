@@ -1,9 +1,7 @@
 use ndarray::parallel::prelude::*;
-use numpy::ndarray::{Array1, ArrayView1, ArrayView2, ArrayViewMut1, Axis, Zip};
-use numpy::{
-    Element, IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray1,
-};
-use pyo3::{pymodule, types::PyModule, FromPyObject, PyObject, PyResult, Python};
+use numpy::ndarray::{Array1, ArrayView2, Axis, Zip};
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray2};
+use pyo3::{pymodule, types::PyModule, PyResult, Python};
 use std::cell::UnsafeCell;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -21,7 +19,7 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         for (i, col) in arr.axis_iter(Axis(1)).enumerate() {
             let mut val = i64::MIN;
             for x in col {
-                if val <= *x {
+                if val < *x {
                     val = *x;
                 }
             }
@@ -41,6 +39,46 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         let end = SystemTime::now();
         let duration = end.duration_since(start).unwrap();
         println!("rustpy took {} milliseconds", duration.as_millis());
+        result
+    }
+
+    fn find_max_parallel(arr: ArrayView2<'_, i64>) -> Array1<i64> {
+        let mutex = Arc::new(Mutex::new(Array1::default(arr.ncols())));
+
+        // parallel iterator is not implemented, so some hacks
+        // https://github.com/rust-ndarray/ndarray/issues/1043
+        // https://github.com/rust-ndarray/ndarray/issues/1093
+        Zip::indexed(arr.axis_iter(Axis(1)))
+            .into_par_iter()
+            .for_each(|(i, col)| {
+                let mut val = i64::MIN;
+                for x in col {
+                    if val < *x {
+                        val = *x;
+                    }
+                }
+
+                let mut guard = mutex.lock().unwrap();
+                guard[i] = val;
+            });
+
+        // https://stackoverflow.com/questions/29177449/how-to-take-ownership-of-t-from-arcmutext
+        let lock = Arc::try_unwrap(mutex).expect("Lock still have multiple owners");
+        lock.into_inner().expect("Mutex cannot be locked")
+    }
+
+    // wrapper of `find_max`
+    #[pyfn(m)]
+    #[pyo3(name = "find_max_parallel")]
+    fn find_max_py_parallel<'py>(
+        py: Python<'py>,
+        x: PyReadonlyArray2<'_, i64>,
+    ) -> &'py PyArray1<i64> {
+        let start = SystemTime::now();
+        let result = find_max_parallel(x.as_array()).into_pyarray(py);
+        let end = SystemTime::now();
+        let duration = end.duration_since(start).unwrap();
+        println!("rustpy parallel took {} milliseconds", duration.as_millis());
         result
     }
 
@@ -73,43 +111,33 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         }
     }
 
-    // example using complex numbers
-    fn find_max_parallel(arr: ArrayView2<'_, i64>) -> Array1<i64> {
-        //let out = UnsafeCell::new(Array1::default(arr.ncols()));
+    fn find_max_unsafe(arr: ArrayView2<'_, i64>) -> Array1<i64> {
         let mut out = Array1::default(arr.ncols());
-        let hax = UnsafeArray1::new(&mut out);
+        let uout = UnsafeArray1::new(&mut out);
 
-        // parallel iterator is not implemented, so some hacks
-        // https://github.com/rust-ndarray/ndarray/issues/1043
-        // https://github.com/rust-ndarray/ndarray/issues/1093
         Zip::indexed(arr.axis_iter(Axis(1)))
             .into_par_iter()
             .for_each(|(i, col)| {
                 let mut val = i64::MIN;
                 for x in col {
-                    if val <= *x {
+                    if val < *x {
                         val = *x;
                     }
                 }
 
-                unsafe { hax.write(i, val) };
+                unsafe { uout.write(i, val) };
             });
 
         out
     }
 
-    // wrapper of `find_max`
     #[pyfn(m)]
-    #[pyo3(name = "find_max_parallel")]
-    fn find_max_py_parallel<'py>(
+    #[pyo3(name = "find_max_unsafe")]
+    fn find_max_py_unsafe<'py>(
         py: Python<'py>,
         x: PyReadonlyArray2<'_, i64>,
     ) -> &'py PyArray1<i64> {
-        let start = SystemTime::now();
-        let result = find_max_parallel(x.as_array()).into_pyarray(py);
-        let end = SystemTime::now();
-        let duration = end.duration_since(start).unwrap();
-        println!("rustpy took {} milliseconds", duration.as_millis());
+        let result = find_max_unsafe(x.as_array()).into_pyarray(py);
         result
     }
 
