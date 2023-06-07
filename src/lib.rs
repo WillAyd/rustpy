@@ -107,7 +107,7 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         /// synchronization.
         pub unsafe fn write(&self, i: usize, value: i64) {
             let ptr = self.array.get();
-            (*ptr)[i] = value;
+            *(*ptr).uget_mut(i) = value;
         }
     }
 
@@ -137,7 +137,14 @@ fn rust_ext(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py: Python<'py>,
         x: PyReadonlyArray2<'_, i64>,
     ) -> &'py PyArray1<i64> {
+        let start = SystemTime::now();
         let result = find_max_unsafe(x.as_array()).into_pyarray(py);
+        let end = SystemTime::now();
+        let duration = end.duration_since(start).unwrap();
+        println!(
+            "rustpy max_unsafe took {} milliseconds",
+            duration.as_millis()
+        );
         result
     }
 
